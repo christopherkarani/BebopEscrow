@@ -1,4 +1,4 @@
-# Soroban Project
+# Bebop Escrow
 
 ## Project Structure
 
