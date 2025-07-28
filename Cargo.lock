@@ -820,6 +820,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "p2p-marketplace"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk",
+]
+
+[[package]]
 name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"

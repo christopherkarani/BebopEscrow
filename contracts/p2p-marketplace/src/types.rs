@@ -301,4 +301,4 @@ pub const DISPUTE_RAISED: Symbol = Symbol::short("dis_rais");
 /// Event emitted when an admin resolves a dispute
 /// Contains: (trade_id, resolution)
 /// Used by: resolve_dispute function
-pub const DISPUTE_RESOLVED: Symbol = Symbol::short("dis_resl");
+pub const DISPUTE_RESOLVED: Symbol = symbol_short!("dis_resl");

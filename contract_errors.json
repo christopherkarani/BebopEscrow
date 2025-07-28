@@ -1,0 +1,75 @@
+{
+  "version": "1.0.0",
+  "errors": [
+    {
+      "code": 1,
+      "name": "OfferNotFound",
+      "message": "The requested offer ID does not exist. It may have been cancelled, completed, or never created."
+    },
+    {
+      "code": 2,
+      "name": "TradeNotFound",
+      "message": "The requested trade ID does not exist."
+    },
+    {
+      "code": 3,
+      "name": "AlreadyHasActiveOffer",
+      "message": "The seller already has an active offer and cannot create another one."
+    },
+    {
+      "code": 4,
+      "name": "TradeExpired",
+      "message": "The trade has passed its expiration time and is no longer valid."
+    },
+    {
+      "code": 5,
+      "name": "InvalidTradeStatus",
+      "message": "The operation is not permitted for the trade's current status."
+    },
+    {
+      "code": 6,
+      "name": "Unauthorized",
+      "message": "The caller is not authorized to perform this operation."
+    },
+    {
+      "code": 7,
+      "name": "TradeAlreadyInitiated",
+      "message": "This offer already has an active trade in progress."
+    },
+    {
+      "code": 8,
+      "name": "ContractPaused",
+      "message": "All trading operations are temporarily disabled."
+    },
+    {
+      "code": 9,
+      "name": "TradeNotExpired",
+      "message": "The trade has not yet expired and cannot be resolved."
+    },
+    {
+      "code": 10,
+      "name": "InsufficientAllowance",
+      "message": "The seller has not approved the contract to spend the required USDC amount, or their balance is too low."
+    },
+    {
+      "code": 11,
+      "name": "InvalidAmount",
+      "message": "The provided amount is invalid (e.g., zero, negative, or outside the allowed limits)."
+    },
+    {
+      "code": 12,
+      "name": "TokenTransferFailed",
+      "message": "The USDC token transfer failed for a technical reason."
+    },
+    {
+      "code": 13,
+      "name": "InvalidTokenAddress",
+      "message": "The provided token address is not a valid token."
+    },
+    {
+      "code": 14,
+      "name": "RateLimitExceeded",
+      "message": "The user has exceeded the allowed rate limit for this operation."
+    }
+  ]
+}

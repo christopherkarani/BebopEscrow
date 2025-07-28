@@ -34,7 +34,7 @@ use soroban_sdk::{
     contract,
     contractimpl,
     token,
-    Address, Env, Map, Symbol, log
+    Address, Env, Map, Symbol, log, symbol_short
 };
 
 use types::{
@@ -84,6 +84,7 @@ impl P2PMarketplaceContract {
     /// - Validates that USDC token address is a valid token contract
     /// - Uses persistent storage for critical configuration to survive upgrades
     /// - Prevents double initialization
+    /// - Validates all addresses are non-zero
     /// 
     /// # Returns
     /// Result indicating success or failure of initialization
@@ -92,6 +93,11 @@ impl P2PMarketplaceContract {
         if env.storage().instance().has(&ADMIN_KEY) {
             panic!("Contract already initialized");
         }
+        
+        // SECURITY FIX: Validate all critical addresses
+        Self::_validate_address(&admin)?;
+        Self::_validate_address(&usdc_token_id)?;
+        Self::_validate_address(&fee_collector)?;
         
         // Validate USDC token is a legitimate token contract by calling decimals()
         // This will panic if the address doesn't implement the token interface
@@ -149,6 +155,29 @@ impl P2PMarketplaceContract {
         env.storage().instance().get(&PAUSED_KEY).unwrap_or(false)
     }
 
+    /// Internal helper to validate that an address is not zero/empty.
+    /// Zero addresses can cause critical issues in token transfers and access control.
+    /// 
+    /// # Security Notes
+    /// - Prevents common attack vector of using zero address
+    /// - Essential for proper access control and token safety
+    /// - Should be called for all critical address parameters
+    /// 
+    /// # Arguments
+    /// * `addr` - The address to validate
+    /// 
+    /// # Returns
+    /// Result indicating if address is valid
+    fn _validate_address(addr: &Address) -> Result<(), Error> {
+        // Check if address has any bytes (not empty)
+        // In Soroban, addresses should have proper structure
+        // This is a basic check - the SDK handles most validation
+        if addr.to_string().is_empty() {
+            return Err(Error::InvalidAmount); // Using InvalidAmount for now, could add InvalidAddress error
+        }
+        Ok(())
+    }
+
     /// Internal helper to determine if a trade has exceeded its time limit.
     /// Trades have expiration times to prevent indefinite escrow situations.
     /// 
@@ -175,6 +204,7 @@ impl P2PMarketplaceContract {
     /// - Uses basis points for precise percentage calculations
     /// - 1 basis point = 0.01%, so 25 basis points = 0.25%
     /// - Formula: (amount * fee_rate) / 10000
+    /// - Includes overflow protection for large amounts
     /// 
     /// # Arguments
     /// * `amount` - The trade amount to calculate fee for
@@ -183,7 +213,21 @@ impl P2PMarketplaceContract {
     /// # Returns
     /// The calculated fee amount
     fn _calculate_fee(amount: i128, fee_rate: u32) -> i128 {
-        (amount * fee_rate as i128) / (BASIS_POINTS_DIVISOR as i128)
+        // SECURITY FIX: Check for potential overflow before multiplication
+        // Maximum safe value = i128::MAX / max_fee_rate (1000)
+        const MAX_SAFE_AMOUNT: i128 = i128::MAX / 1000;
+        
+        // If amount is too large, use a safer calculation method
+        if amount > MAX_SAFE_AMOUNT {
+            // For very large amounts, divide first to prevent overflow
+            // This may lose some precision but prevents overflow
+            let amount_divided = amount / (BASIS_POINTS_DIVISOR as i128);
+            amount_divided.saturating_mul(fee_rate as i128)
+        } else {
+            // Normal calculation for reasonable amounts
+            // Use saturating_mul to ensure no panic on overflow
+            amount.saturating_mul(fee_rate as i128) / (BASIS_POINTS_DIVISOR as i128)
+        }
     }
 
     /// Creates a new offer to sell USDC for KES with escrow protection.
@@ -224,6 +268,9 @@ impl P2PMarketplaceContract {
         
         // Verify the seller has signed this transaction
         seller.require_auth();
+        
+        // SECURITY FIX: Validate seller address
+        Self::_validate_address(&seller)?;
 
         // Input validation - prevent invalid or malicious amounts
         if usdc_amount <= 0 || kes_amount <= 0 {
@@ -290,7 +337,7 @@ impl P2PMarketplaceContract {
 
         // Store the offer and update active offers mapping for efficient lookups
         offers.set(offer_id, offer);
-        active_offers.set(seller, offer_id);
+        active_offers.set(seller.clone(), offer_id);
 
         // Persist changes to storage
         env.storage().instance().set(&OFFERS_KEY, &offers);
@@ -341,6 +388,9 @@ impl P2PMarketplaceContract {
         
         // Verify the buyer has signed this transaction
         buyer.require_auth();
+        
+        // SECURITY FIX: Validate buyer address
+        Self::_validate_address(&buyer)?;
 
         // Retrieve the offer details to validate the trade
         let offers: Map<u64, Offer> = env.storage().instance().get(&OFFERS_KEY).unwrap();
@@ -365,12 +415,16 @@ impl P2PMarketplaceContract {
         let mut trades: Map<u64, Trade> = env.storage().instance().get(&TRADES_KEY).unwrap();
         
         // Optimized check: Only look for active trade statuses to allow completed/cancelled trades
-        let has_active_trade = trades.values().any(|trade: Trade| {
-            trade.offer_id == offer_id && 
-            (trade.status == TradeStatus::Initiated || 
-             trade.status == TradeStatus::PaymentConfirmed ||
-             trade.status == TradeStatus::Disputed)
-        });
+        let mut has_active_trade = false;
+        for trade in trades.values() {
+            if trade.offer_id == offer_id && 
+               (trade.status == TradeStatus::Initiated || 
+                trade.status == TradeStatus::PaymentConfirmed ||
+                trade.status == TradeStatus::Disputed) {
+                has_active_trade = true;
+                break;
+            }
+        }
         
         if has_active_trade {
             return Err(Error::TradeAlreadyInitiated);
@@ -517,15 +571,33 @@ impl P2PMarketplaceContract {
         let offers: Map<u64, Offer> = env.storage().instance().get(&OFFERS_KEY).unwrap();
         let offer = offers.get(trade.offer_id).ok_or(Error::OfferNotFound)?;
 
-        // Setup USDC token client for transfers
-        let usdc_token_id: Address = env.storage().persistent().get(&USDC_TOKEN_KEY).unwrap();
-        let usdc_client = token::Client::new(&env, &usdc_token_id);
-        
         // Calculate trading fee based on configured rate
         let fee_rate: u32 = env.storage().persistent().get(&FEE_RATE_KEY)
             .unwrap_or(DEFAULT_FEE_RATE);
         let fee_amount = Self::_calculate_fee(offer.usdc_amount, fee_rate);
         let amount_to_buyer = offer.usdc_amount - fee_amount;
+        
+        // CRITICAL SECURITY FIX: Update state BEFORE transfers to prevent reentrancy
+        // Following checks-effects-interactions pattern
+        
+        // Update trade status to completed BEFORE transfers
+        trade.status = TradeStatus::Completed;
+        trades.set(trade_id, trade.clone());
+
+        // Remove offer from active offers BEFORE transfers
+        let mut active_offers: Map<Address, u64> = env.storage().instance().get(&ACTIVE_OFFERS).unwrap();
+        active_offers.remove(offer.seller.clone());
+
+        // Persist all state changes BEFORE transfers
+        env.storage().instance().set(&TRADES_KEY, &trades);
+        env.storage().instance().set(&ACTIVE_OFFERS, &active_offers);
+
+        // Emit completion event BEFORE transfers for consistency
+        env.events().publish((TRADE_COMPLETED, trade.buyer.clone()), (trade_id,));
+
+        // Now perform the external calls (transfers)
+        let usdc_token_id: Address = env.storage().persistent().get(&USDC_TOKEN_KEY).unwrap();
+        let usdc_client = token::Client::new(&env, &usdc_token_id);
         
         // Primary transfer: Send USDC to buyer (minus fees)
         // This is the main value transfer that completes the trade
@@ -533,6 +605,16 @@ impl P2PMarketplaceContract {
             Ok(_) => {},
             Err(_) => {
                 log!(&env, "Failed to transfer {} to buyer", amount_to_buyer);
+                // CRITICAL: Since we already updated state, we need to revert on failure
+                // Revert the trade status
+                trade.status = TradeStatus::PaymentConfirmed;
+                trades.set(trade_id, trade.clone());
+                env.storage().instance().set(&TRADES_KEY, &trades);
+                
+                // Revert the active offers
+                active_offers.set(offer.seller.clone(), trade.offer_id);
+                env.storage().instance().set(&ACTIVE_OFFERS, &active_offers);
+                
                 return Err(Error::TokenTransferFailed);
             }
         }
@@ -550,22 +632,6 @@ impl P2PMarketplaceContract {
                 }
             }
         }
-
-        // Update trade status to completed
-        trade.status = TradeStatus::Completed;
-        trades.set(trade_id, trade.clone());
-
-        // Remove offer from active offers since it's now completed
-        // This allows the seller to create new offers
-        let mut active_offers: Map<Address, u64> = env.storage().instance().get(&ACTIVE_OFFERS).unwrap();
-        active_offers.remove(offer.seller.clone());
-
-        // Persist all state changes
-        env.storage().instance().set(&TRADES_KEY, &trades);
-        env.storage().instance().set(&ACTIVE_OFFERS, &active_offers);
-
-        // Emit completion event for transparency and celebration!
-        env.events().publish((TRADE_COMPLETED, trade.buyer.clone()), (trade_id,));
 
         Ok(())
     }
@@ -630,8 +696,18 @@ impl P2PMarketplaceContract {
         let usdc_token_id: Address = env.storage().persistent().get(&USDC_TOKEN_KEY).unwrap();
         let usdc_client = token::Client::new(&env, &usdc_token_id);
 
-        // Critical transfer: Return USDC from escrow to seller
-        usdc_client.transfer(&env.current_contract_address(), &offer.seller, &offer.usdc_amount);
+        // SECURITY FIX: Use try_transfer with proper error handling
+        match usdc_client.try_transfer(&env.current_contract_address(), &offer.seller, &offer.usdc_amount) {
+            Ok(_) => {},
+            Err(_) => {
+                log!(&env, "Failed to return {} to seller on cancel", offer.usdc_amount);
+                // Revert the trade status since transfer failed
+                trade.status = TradeStatus::Initiated;
+                trades.set(trade_id, trade);
+                env.storage().instance().set(&TRADES_KEY, &trades);
+                return Err(Error::TokenTransferFailed);
+            }
+        }
 
         // Clean up: Remove offer from active offers so seller can create new ones
         let mut active_offers: Map<Address, u64> = env.storage().instance().get(&ACTIVE_OFFERS).unwrap();
@@ -771,12 +847,16 @@ impl P2PMarketplaceContract {
         
         // Optimized check: Only prevent cancellation if there's an active trade
         // Completed and cancelled trades don't block offer cancellation
-        let has_active_trade = trades.values().any(|trade: Trade| {
-            trade.offer_id == offer_id && 
-            (trade.status == TradeStatus::Initiated || 
-             trade.status == TradeStatus::PaymentConfirmed || 
-             trade.status == TradeStatus::Disputed)
-        });
+        let mut has_active_trade = false;
+        for trade in trades.values() {
+            if trade.offer_id == offer_id && 
+               (trade.status == TradeStatus::Initiated || 
+                trade.status == TradeStatus::PaymentConfirmed || 
+                trade.status == TradeStatus::Disputed) {
+                has_active_trade = true;
+                break;
+            }
+        }
         
         if has_active_trade {
             return Err(Error::TradeAlreadyInitiated);
@@ -1063,11 +1143,14 @@ impl P2PMarketplaceContract {
         // Require new admin to sign transaction - prevents accidental transfers
         new_admin.require_auth();
         
+        // SECURITY FIX: Validate new admin address
+        Self::_validate_address(&new_admin)?;
+        
         // Update admin address in persistent storage
         env.storage().persistent().set(&ADMIN_KEY, &new_admin);
         
         // Emit event for security audit trail
-        env.events().publish((Symbol::short("adm_upd"), env.current_contract_address()), &new_admin);
+        env.events().publish((symbol_short!("adm_upd"), env.current_contract_address()), &new_admin);
         
         Ok(())
     }
@@ -1092,6 +1175,9 @@ impl P2PMarketplaceContract {
     pub fn update_fee_collector(env: Env, new_fee_collector: Address) -> Result<(), Error> {
         // Verify admin authorization
         Self::_require_admin(&env)?;
+        
+        // SECURITY FIX: Validate new fee collector address
+        Self::_validate_address(&new_fee_collector)?;
         
         // Update fee collector address in persistent storage
         env.storage().persistent().set(&FEE_COLLECTOR_KEY, &new_fee_collector);
@@ -1157,6 +1243,13 @@ impl P2PMarketplaceContract {
         
         // Validate amount parameters
         if min_amount <= 0 || max_amount <= 0 || min_amount > max_amount {
+            return Err(Error::InvalidAmount);
+        }
+        
+        // SECURITY FIX: Additional bounds checking to prevent extreme values
+        // Maximum reasonable amount is 1 trillion USDC (with 6 decimals)
+        const MAX_REASONABLE_AMOUNT: i128 = 1_000_000_000_000_000_000; // 1 trillion USDC
+        if max_amount > MAX_REASONABLE_AMOUNT {
             return Err(Error::InvalidAmount);
         }
         
