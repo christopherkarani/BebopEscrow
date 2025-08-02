@@ -6,7 +6,7 @@
  * aspects of the trading system with clear semantics and efficient storage.
  */
 
-use soroban_sdk::{contracterror, contracttype, Address, Symbol};
+use soroban_sdk::{contracterror, contracttype, Address, Symbol, symbol_short};
 
 // ================================================================================================
 // CORE DATA STRUCTURES
@@ -266,37 +266,37 @@ pub enum Error {
 /// Event emitted when a new offer is created
 /// Contains: (offer_id, usdc_amount, kes_amount)
 /// Used by: create_offer function
-pub const OFFER_CREATED: Symbol = Symbol::short("offr_crt");
+pub const OFFER_CREATED: Symbol = symbol_short!("offr_crt");
 
 /// Event emitted when a trade is initiated against an offer
 /// Contains: (trade_id, offer_id)  
 /// Used by: initiate_trade function
-pub const TRADE_INITIATED: Symbol = Symbol::short("trd_init");
+pub const TRADE_INITIATED: Symbol = symbol_short!("trd_init");
 
 /// Event emitted when a participant confirms payment
 /// Contains: (trade_id)
 /// Used by: confirm_payment function
-pub const PAYMENT_CONFIRMED: Symbol = Symbol::short("pay_conf");
+pub const PAYMENT_CONFIRMED: Symbol = symbol_short!("pay_conf");
 
 /// Event emitted when a trade is successfully completed
 /// Contains: (trade_id)
 /// Used by: release_usdc function (internal)
-pub const TRADE_COMPLETED: Symbol = Symbol::short("trd_comp");
+pub const TRADE_COMPLETED: Symbol = symbol_short!("trd_comp");
 
 /// Event emitted when a trade is cancelled
 /// Contains: (trade_id)
 /// Used by: cancel_trade, resolve_expired_trade functions
-pub const TRADE_CANCELLED: Symbol = Symbol::short("trd_canc");
+pub const TRADE_CANCELLED: Symbol = symbol_short!("trd_canc");
 
 /// Event emitted when an offer is cancelled
 /// Contains: (offer_id)
 /// Used by: cancel_offer function
-pub const OFFER_CANCELLED: Symbol = Symbol::short("offr_canc");
+pub const OFFER_CANCELLED: Symbol = symbol_short!("offr_canc");
 
 /// Event emitted when a dispute is raised for a trade
 /// Contains: (trade_id)
 /// Used by: raise_dispute function
-pub const DISPUTE_RAISED: Symbol = Symbol::short("dis_rais");
+pub const DISPUTE_RAISED: Symbol = symbol_short!("dis_rais");
 
 /// Event emitted when an admin resolves a dispute
 /// Contains: (trade_id, resolution)
